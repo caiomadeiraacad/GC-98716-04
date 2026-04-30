@@ -13,25 +13,35 @@
 
 using namespace std;
 
+typedef enum {
+    PLAYER,
+    ENEMY
+} EntityType;
+
 typedef struct {
     int possibleCurveId;
     int possibleDirection;
 } PossibleCurves;
 
 typedef struct {
+  int id;
   Ponto currentPosition;
   Ponto nextPosition;
-  int currentCurveId;
   int nextCurveId;
+  int currentCurveId;
   int nextDirection; // direcao p npc saber onde comecar (-1 ou 1)
-  int direction;
+  int direction; // direction = 1 -> sentido é o ponto inicial da curva; direction = -1 -> sentido é o ponto final da curva.
   PossibleCurves possibleCurves[20];
   int totalPossibleCurves;
   float t; // basicamente o progresso dele na curva. o deslocamento
 } NPC;
 
+typedef struct {
+    NPC* npcs[11];
+} World;
+
 /*
-coloquei esse nome pois guarda o indice de cada ponto da curva.
+20/04: coloquei esse nome pois guarda o indice de cada ponto da curva.
 Pra apenas uma curva. O conjunto completo forma a topologia = como tudo esta conectado e
 o nome Curves antes estava confuso.
 */
@@ -51,19 +61,23 @@ Poligono controlPoints; // controlPoints
 Poligono polygon;
 CurvesIndices* curvesIndices;
 BezierCurves* bezierCurves; // guarda as curvas que vao se desenhadas
-NPC* npc;
+//NPC* npc;
+World* world;
 
-NPC* initNPC() {
+NPC* initNPC(int initialCurveId, int initialDirection) {
     int maxBranches = 20;
     NPC* p = new NPC();
     if (p != NULL) {
+        //p->currentPosition = Ponto(0.0f, 0.0f);
+        p->id = 0;
         p->currentPosition = Ponto(0.0f, 0.0f);
         p->nextPosition = Ponto(0.0f, 0.0f);
         p->currentCurveId = 0;
         p->nextCurveId = 0;
         p->t = 0.0f;
         p->nextDirection = 1;
-        p->direction = 1;
+        //p->direction = 1;
+        p->direction = initialDirection;
         for (int i = 0; i < maxBranches; i++) {
             p->possibleCurves[i].possibleCurveId = 0;
             p->possibleCurves[i].possibleDirection = 0;
@@ -133,68 +147,73 @@ int loadFile(const char* filename, Poligono* polygon, CurvesIndices* curvesIndic
 }
 
 void findNearbyCurves(void) {
-    npc->totalPossibleCurves = 0; // limpando o os numeros aleatorios pq ele estava tomando decisoes malucas
     int destiny; // o indice final ou indice inicial dependendo da direção da curva atual do npc
-    // pergunto a direcao antes de deifnir o destino
-    if (npc->direction == 1) {
-        destiny = curvesIndices[npc->currentCurveId].endIndex; 
-    } else {
-        destiny = curvesIndices[npc->currentCurveId].startIndex; 
-    }
-    cout << "O NPC vai terminar a curva atual no ponto ID: " << destiny << endl;
 
-    for(int i = 0; i < totalCurves; i++) {
-        if (i == npc->currentCurveId) {
-            continue;
+    for(int i = 0; i < totalCurves - 3; i++) {
+        // npc->totalPossibleCurves = 0; // limpando o os numeros aleatorios pq ele estava tomando decisoes malucas
+        //world->npcs[i]->possibleCurves = 0;
+        // pergunto a direcao antes de definir o destino
+        if (world->npcs[i]->direction == 1) {
+            destiny = curvesIndices[world->npcs[i]->currentCurveId].endIndex; 
+        } else {
+            destiny = curvesIndices[world->npcs[i]->currentCurveId].startIndex; 
         }
+        cout << "O NPC vai terminar a curva atual no ponto ID: " << destiny << endl;
 
-        if (curvesIndices[i].startIndex == destiny) {
-            npc->possibleCurves[npc->totalPossibleCurves].possibleCurveId = i;
-            npc->possibleCurves[npc->totalPossibleCurves].possibleDirection = 1;
-            npc->totalPossibleCurves++;
-            // npc->nextCurveId = i;
-            //npc->nextDirection = 1;
-            //break;
-        } else if (curvesIndices[i].endIndex == destiny) {
-            npc->possibleCurves[npc->totalPossibleCurves].possibleCurveId = i;
-            npc->possibleCurves[npc->totalPossibleCurves].possibleDirection = -1;
-            npc->totalPossibleCurves++;
-            // npc->nextCurveId = i;
-            // npc->nextDirection = -1;
-            //break;
+        for(int i = 0; i < totalCurves; i++) {
+            if (i == world->npcs[i]->currentCurveId) {
+                continue;
+            }
+
+            if (curvesIndices[i].startIndex == destiny) {
+                world->npcs[i]->possibleCurves[world->npcs[i]->totalPossibleCurves].possibleCurveId = i;
+                world->npcs[i]->possibleCurves[world->npcs[i]->totalPossibleCurves].possibleDirection = 1;
+                world->npcs[i]->totalPossibleCurves++;
+                // npc->nextCurveId = i;
+                //npc->nextDirection = 1;
+                //break;
+            } else if (curvesIndices[i].endIndex == destiny) {
+                world->npcs[i]->possibleCurves[world->npcs[i]->totalPossibleCurves].possibleCurveId = i;
+                world->npcs[i]->possibleCurves[world->npcs[i]->totalPossibleCurves].possibleDirection = -1;
+                world->npcs[i]->totalPossibleCurves++;
+                // npc->nextCurveId = i;
+                // npc->nextDirection = -1;
+                //break;
+            }
         }
     }
 }
 
-
 void animateNPC(int value) {
     int rndNewCurveIndex;
-    if (npc->direction == 1) {
-        npc->t += 0.005f;
-    } else {
-        npc->t -= 0.005f;
-    }
-
-    if ((npc->direction == 1 && npc->t >= 1.0f) || (npc->direction == -1 && npc->t <= 0.0f)) { 
-        npc->currentCurveId = npc->nextCurveId;
-        npc->direction = npc->nextDirection;
-        cout << "Entrando na nova curva=" << npc->currentCurveId << " | Direcao=" << npc->direction << endl;
-
-        if (npc->direction == 1) {
-            npc->t = 0.0f;
+    for(int i = 0; i < totalCurves - 3; i++) {
+        if (world->npcs[i]->direction == 1) {
+            world->npcs[i]->t += 0.005f;
         } else {
-            npc->t = 1.0f;
+            world->npcs[i]->t -= 0.005f;
         }
-    }
 
-    if (npc->t >= 0.500f && npc->t < 0.505f) {
-        findNearbyCurves();
-        if (npc->totalPossibleCurves > 0) {
-            rndNewCurveIndex = rand() % npc->totalPossibleCurves;
-            npc->nextCurveId = npc->possibleCurves[rndNewCurveIndex].possibleCurveId;
-            npc->nextDirection = npc->possibleCurves[rndNewCurveIndex].possibleDirection;
+        if ((world->npcs[i]->direction == 1 && world->npcs[i]->t >= 1.0f) || (world->npcs[i]->direction == -1 && world->npcs[i]->t <= 0.0f)) { 
+            world->npcs[i]->currentCurveId = world->npcs[i]->nextCurveId;
+            world->npcs[i]->direction = world->npcs[i]->nextDirection;
+            //cout << "Entrando na nova curva=" << npc->currentCurveId << " | Direcao=" << npc->direction << endl;
+
+            if (world->npcs[i]->direction == 1) {
+                world->npcs[i]->t = 0.0f;
+            } else {
+                world->npcs[i]->t = 1.0f;
+            }
         }
-        cout << "Decidindo nova curva= " << npc->nextCurveId << endl;
+
+        if (world->npcs[i]->t >= 0.500f && world->npcs[i]->t < 0.505f) {
+            findNearbyCurves();
+            if (world->npcs[i]->totalPossibleCurves > 0) {
+                rndNewCurveIndex = rand() % world->npcs[i]->totalPossibleCurves;
+                world->npcs[i]->nextCurveId = world->npcs[i]->possibleCurves[rndNewCurveIndex].possibleCurveId;
+                world->npcs[i]->nextDirection = world->npcs[i]->possibleCurves[rndNewCurveIndex].possibleDirection;
+            }
+            //cout << "Decidindo nova curva= " << npc->nextCurveId << endl;
+        }
     }
 
     glutPostRedisplay();
@@ -215,15 +234,17 @@ void DrawVehicle(void)
 
 float moveObject(int& i) {
     float dx, dy, angleRads, angleDegrees;
+    cout << "current curve=" << world->npcs[i]->currentCurveId << endl;
+    cout << "next curve=" << world->npcs[i]->nextCurveId << endl; 
     /*
     aqui eu uso derivada (pela calcula ja da classe) pra descobrir para onde eu faço o triangulo deve virar
     seu vertice maior. Uso t + 0.001 pra saber onde o veiculo vai estar em 1 seg no futuro.
     */
-    npc->currentPosition = bezierCurves->visualCurves[i]->Calcula(npc->t);
-    if (npc->direction == 1) {
-        npc->nextPosition = bezierCurves->visualCurves[i]->Calcula(npc->t + 0.1);
+    world->npcs[i]->currentPosition = bezierCurves->visualCurves[i]->Calcula(world->npcs[i]->t);
+    if (world->npcs[i]->direction == 1) {
+        world->npcs[i]->nextPosition = bezierCurves->visualCurves[i]->Calcula(world->npcs[i]->t + 0.1);
     } else {
-        npc->nextPosition = bezierCurves->visualCurves[i]->Calcula(npc->t - 0.1);
+        world->npcs[i]->nextPosition = bezierCurves->visualCurves[i]->Calcula(world->npcs[i]->t - 0.1);
     }
     /*
     delta x e delta y sao calculados aqui. 
@@ -231,8 +252,8 @@ float moveObject(int& i) {
     é basicamente desenhar um triangulo retangulo onde dx e dy sao catetos (base e altura, respec)
     e a hipotenusa é o vetor de deslocamento apontando exatamente pra direção do movimento.
     */
-    dx = npc->nextPosition.x - npc->currentPosition.x;
-    dy = npc->nextPosition.y - npc->currentPosition.y;
+    dx = world->npcs[i]->nextPosition.x - world->npcs[i]->currentPosition.x;
+    dy = world->npcs[i]->nextPosition.y - world->npcs[i]->currentPosition.y;
 
     /*
     tan = cat opt (dy)/ cat adj (dx). O arcotangente me da o angulo.
@@ -257,8 +278,6 @@ void display(void) {
         defineCor(i % 15);
         bezierCurves->visualCurves[i]->Traca();
     }
-    angleDegrees = moveObject(npc->currentCurveId);
-
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
     gluOrtho2D(min.x - 0.5, max.x + 0.5, min.y - 0.5, max.y + 0.5);
@@ -266,25 +285,62 @@ void display(void) {
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
     
-    glPushMatrix();
-        glTranslatef(npc->currentPosition.x, npc->currentPosition.y, 0.0f);
-        glRotatef(angleDegrees - 90.0f, 0.0f, 0.0f, 1.0f);
-        DrawVehicle();
-    glPopMatrix();
-
+    for(int i = 0; totalCurves - 3; i++) {
+        angleDegrees = moveObject(world->npcs[i]->currentCurveId);
+        glPushMatrix();
+            glTranslatef(world->npcs[i]->currentPosition.x, world->npcs[i]->currentPosition.y, 0.0f);
+            glRotatef(angleDegrees - 90.0f, 0.0f, 0.0f, 1.0f);
+            DrawVehicle();
+        glPopMatrix();
+    }
     glutSwapBuffers();
 }
 
-// fiz pra impedir o resize da janela principal ra nao distorcer os componentes graficos
+// fiz pra impedir o resize da janela principal pra nao distorcer os componentes graficos
 void reshape(int w, int h) {
     if (w != 800 || h!= 800) {
         glutReshapeWindow(800, 800);
     }
 }
 
-bool init() {
+/*
+TODO: Se eu quiser que eles spawnem em curvas aleatorias, eu preciso definir o range de pontos que aquela curva
+pode comportar. EX: curva de ID = 12 -> [Ponto(0, 0), Ponto(2, 4)].
+*/
 
-    npc = initNPC();
+void spawnEntity(EntityType entityType) {
+    switch(entityType) {
+        case PLAYER:
+            break;
+        case ENEMY:
+            for(int i = 0; i < totalCurves - 3; i++) {
+                int randCurveId = rand() % i;
+                world->npcs[i] = initNPC(i, 1);
+                //npc = initNPC(0, 1);
+                //npc = initNPC(1, 1);
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+bool init() {
+    // NPC* npc1;
+    // NPC* npc2;
+    // npc1 = initNPC(0, 1);
+    // npc2 = initNPC(1, -1);
+    // npc = initNPC(0, 1);
+
+    World* world = (World*)malloc(sizeof(World));
+    if (world == NULL) { printf(">> ERROR: ALLOC WORLD\n"); exit(-1); }
+    for(int i = 0; i < totalCurves - 3; i++) {
+        world->npcs[i] = NULL;
+        //world->npcs[i] = initNPC(i, 1);
+
+    }
+
+    //spawnEntity(ENEMY);
     controlPoints = Poligono();
 
     curvesIndices = (CurvesIndices*)malloc(50*sizeof(CurvesIndices));
@@ -307,6 +363,9 @@ bool init() {
 
     return true;
 }
+
+// TODO: implementar liberação das estruturas em memória.
+void freeAll() {}
 
 int main(int argc, char** argv) {
 
