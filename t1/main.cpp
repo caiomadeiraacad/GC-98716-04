@@ -40,6 +40,7 @@ typedef struct {
   bool wasMadeDecision; // tentativa de acabar com o estado uito deterministico as trajetorias com decisoes sendo tomadas na msm curva
   bool isMoving;
   int selectedCurveIndex;
+  int cor;
 } NPC;
 
 typedef struct {
@@ -71,6 +72,7 @@ BezierCurves* bezierCurves; // guarda as curvas que vao se desenhadas
 //NPC* npc;
 World* world;
 NPC* player;
+bool gameOver = false;
 
 NPC* initNPC(int initialCurveId, int initialDirection) {
     int maxBranches = 20;
@@ -95,6 +97,7 @@ NPC* initNPC(int initialCurveId, int initialDirection) {
         p->wasMadeDecision = false;
         p->isMoving = true;
         p->selectedCurveIndex = 0;
+        p->cor = rand() % 15;
         return p;
     }
     return NULL;
@@ -160,6 +163,49 @@ int loadFile(const char* filename, Poligono* polygon, CurvesIndices* curvesIndic
     return numCurves;
 }
 
+void resetGame() {
+    player->currentCurveId = 0; 
+    player->nextCurveId = 0;
+    player->t = 0.5f;
+    player->direction = 1;
+    player->nextDirection = 1;
+    player->isMoving = true;
+    player->wasMadeDecision = false;
+    player->currentPosition = Ponto(0.0f, 0.0f); // n eh o ideal, mas como n tem muito tempo jogo o pplayer p ponto 0 p evitar spawn kill
+    for(int i = 0; i < ACTIVE_NPCS; i++) {
+        int rndCurve = rand() % totalCurves;
+        if (rndCurve == 0) rndCurve = 1;
+        
+        world->npcs[i]->currentCurveId = rndCurve;
+        world->npcs[i]->nextCurveId = rndCurve;
+        world->npcs[i]->t = 0.5f;
+        world->npcs[i]->direction = (i % 2 == 0) ? 1 : -1;
+        world->npcs[i]->nextDirection = world->npcs[i]->direction;
+        world->npcs[i]->wasMadeDecision = false;
+    }
+    
+    gameOver = false;
+    cout << "player reiniciou" << endl;
+}
+
+void verifyColision() {
+    if (player == NULL) return;
+    /* evitar spwan kill coloco essa linha segurança*/
+    if (player->currentPosition.x == 0.0f && player->currentPosition.y == 0.0f) return;
+    for(int i =0; i < ACTIVE_NPCS; i++) {
+        NPC* enemy = world->npcs[i];
+        float dx = player->currentPosition.x - enemy->currentPosition.x;
+        float dy = player->currentPosition.y - enemy->currentPosition.y;
+        float distancia = sqrt(dx*dx + dy*dy);
+        if (distancia < 0.1f) { 
+            gameOver = true;
+            cout << "\n========= GAME OVER = TRUE ================" << endl;
+            break; 
+        }
+
+    }
+}
+
 void findNearbyCurves(NPC* currentNPC) {
     int destiny; // o indice final ou indice inicial dependendo da direção da curva atual do npc
 
@@ -199,82 +245,127 @@ void findNearbyCurves(NPC* currentNPC) {
 void animateNPC(int value) {
     int rndNewCurveIndex;
     float timeFrame = 0.033f;
-    for(int i = 0; i < ACTIVE_NPCS; i++) {
-        NPC* currentNPC = world->npcs[i];
-        float delta = currentNPC->speed * timeFrame;
-        float deltaT = bezierCurves->visualCurves[currentNPC->currentCurveId]->CalculaT(delta);
+    if (!gameOver) {
+        verifyColision();
+        if (!gameOver) {
+            for(int i = 0; i < ACTIVE_NPCS; i++) {
+                NPC* currentNPC = world->npcs[i];
+                float delta = currentNPC->speed * timeFrame;
+                float deltaT = bezierCurves->visualCurves[currentNPC->currentCurveId]->CalculaT(delta);
 
-        if (currentNPC->direction == 1) {
-            // currentNPC->t += 0.005f;
-            currentNPC->t += deltaT;
-        } else {
-            // currentNPC->t -= 0.005f;
-            currentNPC->t -= deltaT;
-        }
+                if (currentNPC->direction == 1) {
+                    // currentNPC->t += 0.005f;
+                    currentNPC->t += deltaT;
+                } else {
+                    // currentNPC->t -= 0.005f;
+                    currentNPC->t -= deltaT;
+                }
 
-        if ((currentNPC->direction == 1 && currentNPC->t >= 1.0f) || 
-        (currentNPC->direction == -1 && currentNPC->t <= 0.0f)) { 
+                if ((currentNPC->direction == 1 && currentNPC->t >= 1.0f) || 
+                (currentNPC->direction == -1 && currentNPC->t <= 0.0f)) { 
 
-            currentNPC->currentCurveId = currentNPC->nextCurveId;
-            currentNPC->direction = currentNPC->nextDirection;
-            //cout << "Entrando na nova curva=" << npc->currentCurveId << " | Direcao=" << npc->direction << endl;
+                    currentNPC->currentCurveId = currentNPC->nextCurveId;
+                    currentNPC->direction = currentNPC->nextDirection;
+                    //cout << "Entrando na nova curva=" << npc->currentCurveId << " | Direcao=" << npc->direction << endl;
 
-            if (currentNPC->direction == 1) {
-                currentNPC->t = 0.0f;
-            } else {
-                currentNPC->t = 1.0f;
+                    if (currentNPC->direction == 1) {
+                        currentNPC->t = 0.0f;
+                    } else {
+                        currentNPC->t = 1.0f;
+                    }
+                    currentNPC->wasMadeDecision = false;
+                }
+
+                bool wasCrossedMiddle = (currentNPC->direction == 1 && currentNPC->t >= 0.5f) || 
+                                    (currentNPC->direction == -1 && currentNPC->t <= 0.5f);
+
+                //if (currentNPC->t >= 0.500f && currentNPC->t < 0.505f) {
+                if (wasCrossedMiddle && !currentNPC->wasMadeDecision) {
+                    findNearbyCurves(currentNPC);
+                    if (currentNPC->totalPossibleCurves > 0) {
+                        rndNewCurveIndex = rand() % currentNPC->totalPossibleCurves;
+                        currentNPC->nextCurveId = currentNPC->possibleCurves[rndNewCurveIndex].possibleCurveId;
+                        currentNPC->nextDirection = currentNPC->possibleCurves[rndNewCurveIndex].possibleDirection;
+                    }
+                    //cout << "Decidindo nova curva= " << npc->nextCurveId << endl;
+                    currentNPC->wasMadeDecision = true;
+                }
             }
-            currentNPC->wasMadeDecision = false;
-        }
 
-        bool wasCrossedMiddle = (currentNPC->direction == 1 && currentNPC->t >= 0.5f) || 
-                             (currentNPC->direction == -1 && currentNPC->t <= 0.5f);
+            if (player->isMoving) {
+                float timeFrame = 0.033f; //    TODO colocar como global
+                float delta = player->speed * timeFrame;
+                float deltaT = bezierCurves->visualCurves[player->currentCurveId]->CalculaT(delta);
 
-        //if (currentNPC->t >= 0.500f && currentNPC->t < 0.505f) {
-        if (wasCrossedMiddle && !currentNPC->wasMadeDecision) {
-            findNearbyCurves(currentNPC);
-            if (currentNPC->totalPossibleCurves > 0) {
-                rndNewCurveIndex = rand() % currentNPC->totalPossibleCurves;
-                currentNPC->nextCurveId = currentNPC->possibleCurves[rndNewCurveIndex].possibleCurveId;
-                currentNPC->nextDirection = currentNPC->possibleCurves[rndNewCurveIndex].possibleDirection;
+                if (player->direction == 1) player->t += deltaT;
+                else player->t -= deltaT;
+
+                if ((player->direction == 1 && player->t >= 1.0f) || 
+                    (player->direction == -1 && player->t <= 0.0f)) { 
+                    player->currentCurveId = player->nextCurveId;
+                    player->direction = player->nextDirection;
+                    player->t = (player->direction == 1) ? 0.0f : 1.0f;
+                    player->wasMadeDecision = false;
+                }
+
+                bool wasCrossedMiddle = (player->direction == 1 && player->t >= 0.5f) || 
+                                        (player->direction == -1 && player->t <= 0.5f);
+
+                if (wasCrossedMiddle && !player->wasMadeDecision) {
+                    findNearbyCurves(player);
+                    if (player->totalPossibleCurves > 0) {
+                        player->selectedCurveIndex = 0; 
+                        player->nextCurveId = player->possibleCurves[0].possibleCurveId;
+                        player->nextDirection = player->possibleCurves[0].possibleDirection;
+                    }
+                    player->wasMadeDecision = true;
+                }
             }
-            //cout << "Decidindo nova curva= " << npc->nextCurveId << endl;
-            currentNPC->wasMadeDecision = true;
-        }
-    }
-
-    if (player->isMoving) {
-        float timeFrame = 0.033f; //    TODO colocar como global
-        float delta = player->speed * timeFrame;
-        float deltaT = bezierCurves->visualCurves[player->currentCurveId]->CalculaT(delta);
-
-        if (player->direction == 1) player->t += deltaT;
-        else player->t -= deltaT;
-
-        if ((player->direction == 1 && player->t >= 1.0f) || 
-            (player->direction == -1 && player->t <= 0.0f)) { 
-            player->currentCurveId = player->nextCurveId;
-            player->direction = player->nextDirection;
-            player->t = (player->direction == 1) ? 0.0f : 1.0f;
-            player->wasMadeDecision = false;
-        }
-
-        bool wasCrossedMiddle = (player->direction == 1 && player->t >= 0.5f) || 
-                                (player->direction == -1 && player->t <= 0.5f);
-
-        if (wasCrossedMiddle && !player->wasMadeDecision) {
-            findNearbyCurves(player);
-            if (player->totalPossibleCurves > 0) {
-                player->selectedCurveIndex = 0; 
-                player->nextCurveId = player->possibleCurves[0].possibleCurveId;
-                player->nextDirection = player->possibleCurves[0].possibleDirection;
-            }
-            player->wasMadeDecision = true;
         }
     }
 
     glutPostRedisplay();
     glutTimerFunc(33, animateNPC, 1);
+}
+
+void drawGameOverScreen() {
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    gluOrtho2D(0, 800, 0, 800); 
+    
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
+    
+    glColor3f(1.0f, 0.0f, 0.0f); 
+    glLineWidth(7.0f);
+    glTranslatef(120.0f, 450.0f, 0.0f); 
+    glScalef(0.6f, 0.6f, 1.0f);         
+    
+    const char* deathTitle = "GAMEOVER";
+    for(const char* c = deathTitle; *c != '\0'; c++) {
+        glutStrokeCharacter(GLUT_STROKE_ROMAN, *c);
+    }
+    
+    glPopMatrix();
+    
+    glPushMatrix();
+    glLoadIdentity();
+    glColor3f(0.0f, 0.0f, 0.0f);
+    glLineWidth(3.0f);
+    glTranslatef(120.0f, 380.0f, 0.0f);
+    glScalef(0.25f, 0.25f, 1.0f);
+    
+    const char* subtitule = "PRESS R TO RESTART THE GAME.";
+    for(const char* c = subtitule; *c != '\0'; c++) {
+        glutStrokeCharacter(GLUT_STROKE_ROMAN, *c);
+    }
+    glPopMatrix();
+
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix(); 
+    glMatrixMode(GL_MODELVIEW);
 }
 
 void DrawPlayer(void) {
@@ -290,11 +381,11 @@ void DrawPlayer(void) {
     glEnd();
 }
 
-void DrawVehicle(void)
+void DrawVehicle(int color)
 {
     glRotatef(2.0f, 2.0f, 2.0f, 1.0f);
     glScalef(0.1f, 0.1f, 0.1f);
-    defineCor(OrangeRed);
+    defineCor(color);
     glBegin(GL_TRIANGLES);
         glVertex2f(0.0f, 1.0f);
         glVertex2f(-1.0f, -1.0f);
@@ -370,7 +461,7 @@ void display(void) {
         glPushMatrix();
             glTranslatef(world->npcs[i]->currentPosition.x, world->npcs[i]->currentPosition.y, 0.0f);
             glRotatef(angleDegrees - 90.0f, 0.0f, 0.0f, 1.0f);
-            DrawVehicle(); 
+            DrawVehicle(world->npcs[i]->cor); 
         glPopMatrix();
     }
 
@@ -381,6 +472,10 @@ void display(void) {
             glRotatef(angleDegrees - 90.0f, 0.0f, 0.0f, 1.0f);
             DrawPlayer(); 
         glPopMatrix();
+    }
+
+    if (gameOver) {
+        drawGameOverScreen();
     }
 
     glutSwapBuffers();
@@ -427,12 +522,14 @@ bool init() {
     */
     for(int i = 0; i < ACTIVE_NPCS; i++) {
         int rndCurve = rand() % totalCurves;
+        if (rndCurve == 0) {
+            rndCurve = 1; 
+        }
         int rndDir = (i % 2 == 0) ? 1 : -1;
-        
         world->npcs[i] = initNPC(rndCurve, rndDir);
     }
 
-    player = initNPC(rand() % totalCurves, 1);
+    player = initNPC(0, 1);
 
     return true;
 }
@@ -446,7 +543,7 @@ void keyboard(unsigned char key, int x, int y) {
 
         case 'i':
         case 'I':
-            player->direction += -1;
+            player->direction *= -1;
             player->wasMadeDecision = false;
             printf("sentido invertido.");
             break;
@@ -464,6 +561,11 @@ void keyboard(unsigned char key, int x, int y) {
                 cout << "prox curva mudada para a de ID=" << player->nextCurveId << endl;
             }
             break;
+        case 'r':
+        case 'R':
+            if (gameOver) {
+                resetGame();
+            }
     }
 }
 
