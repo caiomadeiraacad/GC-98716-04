@@ -38,6 +38,8 @@ typedef struct {
   float t; // basicamente o progresso dele na curva. o deslocamento
   float speed;
   bool wasMadeDecision; // tentativa de acabar com o estado uito deterministico as trajetorias com decisoes sendo tomadas na msm curva
+  bool isMoving;
+  int selectedCurveIndex;
 } NPC;
 
 typedef struct {
@@ -68,6 +70,7 @@ CurvesIndices* curvesIndices;
 BezierCurves* bezierCurves; // guarda as curvas que vao se desenhadas
 //NPC* npc;
 World* world;
+NPC* player;
 
 NPC* initNPC(int initialCurveId, int initialDirection) {
     int maxBranches = 20;
@@ -90,6 +93,8 @@ NPC* initNPC(int initialCurveId, int initialDirection) {
         p->totalPossibleCurves = 0;
         p->speed = 1.0f;
         p->wasMadeDecision = false;
+        p->isMoving = true;
+        p->selectedCurveIndex = 0;
         return p;
     }
     return NULL;
@@ -155,10 +160,10 @@ int loadFile(const char* filename, Poligono* polygon, CurvesIndices* curvesIndic
     return numCurves;
 }
 
-void findNearbyCurves(int npcIndex) {
+void findNearbyCurves(NPC* currentNPC) {
     int destiny; // o indice final ou indice inicial dependendo da direção da curva atual do npc
 
-    NPC* currentNPC = world->npcs[npcIndex];
+    // NPC* currentNPC = world->npcs[npcIndex];
     currentNPC->totalPossibleCurves = 0; // limpando o os numeros aleatorios pq ele estava tomando decisoes malucas
     // pergunto a direcao antes de definir o destino
     if (currentNPC->direction == 1) {
@@ -227,7 +232,7 @@ void animateNPC(int value) {
 
         //if (currentNPC->t >= 0.500f && currentNPC->t < 0.505f) {
         if (wasCrossedMiddle && !currentNPC->wasMadeDecision) {
-            findNearbyCurves(i);
+            findNearbyCurves(currentNPC);
             if (currentNPC->totalPossibleCurves > 0) {
                 rndNewCurveIndex = rand() % currentNPC->totalPossibleCurves;
                 currentNPC->nextCurveId = currentNPC->possibleCurves[rndNewCurveIndex].possibleCurveId;
@@ -238,8 +243,51 @@ void animateNPC(int value) {
         }
     }
 
+    if (player->isMoving) {
+        float timeFrame = 0.033f; //    TODO colocar como global
+        float delta = player->speed * timeFrame;
+        float deltaT = bezierCurves->visualCurves[player->currentCurveId]->CalculaT(delta);
+
+        if (player->direction == 1) player->t += deltaT;
+        else player->t -= deltaT;
+
+        if ((player->direction == 1 && player->t >= 1.0f) || 
+            (player->direction == -1 && player->t <= 0.0f)) { 
+            player->currentCurveId = player->nextCurveId;
+            player->direction = player->nextDirection;
+            player->t = (player->direction == 1) ? 0.0f : 1.0f;
+            player->wasMadeDecision = false;
+        }
+
+        bool wasCrossedMiddle = (player->direction == 1 && player->t >= 0.5f) || 
+                                (player->direction == -1 && player->t <= 0.5f);
+
+        if (wasCrossedMiddle && !player->wasMadeDecision) {
+            findNearbyCurves(player);
+            if (player->totalPossibleCurves > 0) {
+                player->selectedCurveIndex = 0; 
+                player->nextCurveId = player->possibleCurves[0].possibleCurveId;
+                player->nextDirection = player->possibleCurves[0].possibleDirection;
+            }
+            player->wasMadeDecision = true;
+        }
+    }
+
     glutPostRedisplay();
     glutTimerFunc(33, animateNPC, 1);
+}
+
+void DrawPlayer(void) {
+    glRotatef(2.0f, 2.0f, 2.0f, 1.0f);
+    glScalef(0.12f, 0.12f, 0.12f);
+    defineCor(Blue);
+    
+    glBegin(GL_POLYGON); 
+        glVertex2f(0.0f, 1.5f);   
+        glVertex2f(-0.8f, -1.0f); 
+        glVertex2f(0.0f, -0.5f);  
+        glVertex2f(0.8f, -1.0f);
+    glEnd();
 }
 
 void DrawVehicle(void)
@@ -254,13 +302,13 @@ void DrawVehicle(void)
     glEnd();
 }
 
-float moveObject(int npcIndex) {
+float moveObject(NPC* currentNPC) {
     float dx, dy, angleRads, angleDegrees;
-    NPC* currentNPC = world->npcs[npcIndex];
+    //NPC* currentNPC = world->npcs[npcIndex];
     int curveId = currentNPC->currentCurveId;
     
-    cout << "current curve=" << currentNPC->currentCurveId << endl;
-    cout << "next curve=" << currentNPC->nextCurveId << endl; 
+    //cout << "current curve=" << currentNPC->currentCurveId << endl;
+    //cout << "next curve=" << currentNPC->nextCurveId << endl; 
     /*
     aqui eu uso derivada (pela calcula ja da classe) pra descobrir para onde eu faço o triangulo deve virar
     seu vertice maior. Uso t + 0.001 pra saber onde o veiculo vai estar em 1 seg no futuro.
@@ -295,14 +343,21 @@ void display(void) {
     Ponto max;
     Ponto min;
     float angleDegrees;
-    int i;
+    
     glClear(GL_COLOR_BUFFER_BIT);
-    // varre tds os vertices do arquivo de texto e descobre o min x, min y, max x e max y e passa pro gluOrtho2D
     controlPoints.obtemLimites(min, max);
-    for(i = 0; i < totalCurves; i++) {
-        defineCor(i % 15);
+    
+    for(int i = 0; i < totalCurves; i++) {
+        if (player != NULL && player->wasMadeDecision && i == player->nextCurveId) {
+            defineCor(Green); 
+            bezierCurves->visualCurves[i]->lineWidth = 8; 
+        } else {
+            defineCor(i % 15);
+            bezierCurves->visualCurves[i]->lineWidth = 3; 
+        }
         bezierCurves->visualCurves[i]->Traca();
     }
+
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
     gluOrtho2D(min.x - 0.5, max.x + 0.5, min.y - 0.5, max.y + 0.5);
@@ -311,13 +366,23 @@ void display(void) {
     glLoadIdentity();
     
     for(int i = 0; i < ACTIVE_NPCS; i++) {
-        angleDegrees = moveObject(i);
+        angleDegrees = moveObject(world->npcs[i]); 
         glPushMatrix();
             glTranslatef(world->npcs[i]->currentPosition.x, world->npcs[i]->currentPosition.y, 0.0f);
             glRotatef(angleDegrees - 90.0f, 0.0f, 0.0f, 1.0f);
-            DrawVehicle();
+            DrawVehicle(); 
         glPopMatrix();
     }
+
+    if (player != NULL) {
+        angleDegrees = moveObject(player);
+        glPushMatrix();
+            glTranslatef(player->currentPosition.x, player->currentPosition.y, 0.0f);
+            glRotatef(angleDegrees - 90.0f, 0.0f, 0.0f, 1.0f);
+            DrawPlayer(); 
+        glPopMatrix();
+    }
+
     glutSwapBuffers();
 }
 
@@ -356,10 +421,10 @@ bool init() {
 
     world = (World*)malloc(sizeof(World));
     if (world == NULL) { return false; }
-/*
-curva escolhida aleatoriamente e sentido aleatorio tb
-metade comeca em -1 e a outra metade 1d
-*/
+    /*
+    curva escolhida aleatoriamente e sentido aleatorio tb
+    metade comeca em -1 e a outra metade 1d
+    */
     for(int i = 0; i < ACTIVE_NPCS; i++) {
         int rndCurve = rand() % totalCurves;
         int rndDir = (i % 2 == 0) ? 1 : -1;
@@ -367,7 +432,39 @@ metade comeca em -1 e a outra metade 1d
         world->npcs[i] = initNPC(rndCurve, rndDir);
     }
 
+    player = initNPC(rand() % totalCurves, 1);
+
     return true;
+}
+
+void keyboard(unsigned char key, int x, int y) {
+    switch(key) {
+        case ' ':
+            player->isMoving = !player->isMoving;
+            cout << (player->isMoving ? "player se movend" : "jogador parado") << endl;
+            break;
+
+        case 'i':
+        case 'I':
+            player->direction += -1;
+            player->wasMadeDecision = false;
+            printf("sentido invertido.");
+            break;
+        case 'c':
+        case 'C':
+            /*
+            precisei por a restricao de o player pode escolher so se ja passou do meio
+            e o random ja ocorreu
+            */
+           if (player->wasMadeDecision && player->totalPossibleCurves > 0) {
+                player->selectedCurveIndex = (player->selectedCurveIndex + 1) % player->totalPossibleCurves;
+                
+                player->nextCurveId = player->possibleCurves[player->selectedCurveIndex].possibleCurveId;
+                player->nextDirection = player->possibleCurves[player->selectedCurveIndex].possibleDirection;
+                cout << "prox curva mudada para a de ID=" << player->nextCurveId << endl;
+            }
+            break;
+    }
 }
 
 // TODO: implementar liberação das estruturas em memória.
@@ -390,6 +487,7 @@ int main(int argc, char** argv) {
 
 
     glutDisplayFunc(display);
+    glutKeyboardFunc(keyboard);
     glutTimerFunc(33, animateNPC, 1);
     glutMainLoop();
 
